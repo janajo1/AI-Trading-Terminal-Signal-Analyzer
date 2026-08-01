@@ -1,0 +1,6 @@
+{
+  "name": "منصة تحليل التداول الذكي | AI Trading Terminal & Signal Analyzer",
+  "description": "واجهة تداول احترافية نمط MT5 مدعومة بالذكاء الاصطناعي لتحليل أسواق العملات، الكريبتو، والذهب مع توصيات واستراتيجيات تلقائية تحدد نقاط الدخول، وقف الخسارة، وجني الأرباح.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
