@@ -8,6 +8,7 @@ interface HeaderProps {
   onOpenHostingGuide: () => void;
   isGenerating: boolean;
   demoBalance: number;
+  onUpdateDemoBalance?: (val: number) => void;
 }
 
 export const Header: React.FC<HeaderProps> = ({
@@ -15,7 +16,8 @@ export const Header: React.FC<HeaderProps> = ({
   onGenerateSignal,
   onOpenHostingGuide,
   isGenerating,
-  demoBalance
+  demoBalance,
+  onUpdateDemoBalance
 }) => {
   return (
     <header id="mt5-header" className="bg-slate-900 border-b border-slate-800 text-white px-4 py-2.5 flex flex-wrap items-center justify-between gap-3 shadow-md select-none">
@@ -51,12 +53,23 @@ export const Header: React.FC<HeaderProps> = ({
 
       {/* Actions & Balance & Free Hosting */}
       <div className="flex items-center gap-2.5">
-        {/* Account Balance Ticker */}
-        <div className="hidden lg:flex items-center gap-1.5 bg-slate-800/90 border border-slate-700/80 px-3 py-1.5 rounded-lg">
+        {/* Account Balance Ticker with Edit Option */}
+        <div className="flex items-center gap-1.5 bg-slate-800/90 border border-slate-700/80 px-3 py-1.5 rounded-lg">
           <DollarSign className="w-4 h-4 text-emerald-400" />
           <div className="text-xs">
-            <div className="text-slate-400 text-[10px]">حساب تجريبي MT5</div>
-            <div className="font-mono font-bold text-emerald-300">${demoBalance.toLocaleString('en-US', { minimumFractionDigits: 2 })}</div>
+            <div className="text-slate-400 text-[10px]">المبلغ/رأس المال:</div>
+            <div className="flex items-center gap-1">
+              <span className="text-emerald-400 font-bold">$</span>
+              <input
+                type="number"
+                min="1"
+                step="any"
+                value={demoBalance}
+                onChange={(e) => onUpdateDemoBalance && onUpdateDemoBalance(Math.max(1, Number(e.target.value)))}
+                className="w-20 bg-slate-950 border border-slate-700 rounded px-1.5 py-0.5 text-emerald-300 font-mono font-bold text-xs focus:outline-none focus:border-emerald-400"
+                placeholder="1"
+              />
+            </div>
           </div>
         </div>
 
@@ -68,7 +81,7 @@ export const Header: React.FC<HeaderProps> = ({
           className="flex items-center gap-2 bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-600 hover:to-teal-700 text-white font-bold px-3.5 py-1.5 rounded-lg text-xs shadow-lg shadow-emerald-900/40 transition-all transform active:scale-95 disabled:opacity-50 cursor-pointer"
         >
           <Sparkles className={`w-4 h-4 text-yellow-300 ${isGenerating ? 'animate-spin' : ''}`} />
-          <span>{isGenerating ? 'جاري تحليل الذكاء الاصطناعي...' : 'توصية تلقائية للزوج الحالي'}</span>
+          <span>{isGenerating ? 'جاري تحليل الذكاء الاصطناعي...' : 'توصية حسب المبلغ والسعر'}</span>
         </button>
 
         {/* Free Hosting & Deployment Button */}

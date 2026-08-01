@@ -22,6 +22,10 @@ export default function App() {
   const [isRightSidebarOpen, setIsRightSidebarOpen] = useState(true);
   const [activeBottomTab, setActiveBottomTab] = useState<'strategies' | 'calculator' | 'copilot'>('strategies');
 
+  // User capital and risk percentage state for capital-tailored recommendations
+  const [userCapital, setUserCapital] = useState<number>(1000);
+  const [riskPercent, setRiskPercent] = useState<number>(2);
+
   // Custom AI Strategy states
   const [isGeneratingCustomStrategy, setIsGeneratingCustomStrategy] = useState(false);
   const [customStrategyResult, setCustomStrategyResult] = useState<string | null>(null);
@@ -254,7 +258,8 @@ export default function App() {
         onGenerateSignal={() => handleGenerateSignal(selectedAsset)}
         onOpenHostingGuide={() => setIsHostingGuideOpen(true)}
         isGenerating={isGeneratingSignal}
-        demoBalance={10000}
+        demoBalance={userCapital}
+        onUpdateDemoBalance={(val) => setUserCapital(val)}
       />
 
       {/* Main Terminal Body Layout */}
@@ -358,6 +363,10 @@ export default function App() {
               <PositionCalculator
                 asset={selectedAsset}
                 activeSignal={activeSignal}
+                userCapital={userCapital}
+                setUserCapital={setUserCapital}
+                riskPercent={riskPercent}
+                setRiskPercent={setRiskPercent}
               />
             )}
 
@@ -419,6 +428,10 @@ export default function App() {
               signal={activeSignal}
               asset={selectedAsset}
               isGenerating={isGeneratingSignal}
+              userCapital={userCapital}
+              setUserCapital={setUserCapital}
+              riskPercent={riskPercent}
+              setRiskPercent={setRiskPercent}
               onGenerateNewSignal={() => handleGenerateSignal(selectedAsset)}
               onApplyToChart={(sig) => setActiveSignal(sig)}
             />

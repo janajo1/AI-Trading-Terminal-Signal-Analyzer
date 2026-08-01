@@ -85,6 +85,16 @@ export interface AISignal {
   timestamp: string;
   status: 'ACTIVE' | 'TARGET_HIT' | 'STOP_HIT' | 'EXPIRED';
   lotSizeRecommendation?: number;
+
+  // Capital & Price tailored recommendation fields
+  userCapital?: number;
+  riskPercent?: number;
+  calculatedLotSize?: number;
+  maxRiskDollar?: number;
+  expectedProfitTp1Dollar?: number;
+  expectedProfitTp2Dollar?: number;
+  expectedProfitTp3Dollar?: number;
+  capitalAdvice?: string;
 }
 
 export interface AIStrategyPreset {

@@ -5,14 +5,35 @@ import { Calculator, DollarSign, ShieldAlert, TrendingUp, RefreshCw } from 'luci
 interface PositionCalculatorProps {
   asset: Asset;
   activeSignal: AISignal | null;
+  userCapital?: number;
+  setUserCapital?: (val: number) => void;
+  riskPercent?: number;
+  setRiskPercent?: (val: number) => void;
 }
 
 export const PositionCalculator: React.FC<PositionCalculatorProps> = ({
   asset,
-  activeSignal
+  activeSignal,
+  userCapital: externalCapital,
+  setUserCapital: externalSetCapital,
+  riskPercent: externalRiskPercent,
+  setRiskPercent: externalSetRiskPercent
 }) => {
-  const [balance, setBalance] = useState<number>(10000);
-  const [riskPercent, setRiskPercent] = useState<number>(2);
+  const [internalBalance, setInternalBalance] = useState<number>(1000);
+  const [internalRiskPercent, setInternalRiskPercent] = useState<number>(2);
+
+  const balance = externalCapital !== undefined ? externalCapital : internalBalance;
+  const setBalance = (val: number) => {
+    setInternalBalance(val);
+    if (externalSetCapital) externalSetCapital(val);
+  };
+
+  const riskPercent = externalRiskPercent !== undefined ? externalRiskPercent : internalRiskPercent;
+  const setRiskPercent = (val: number) => {
+    setInternalRiskPercent(val);
+    if (externalSetRiskPercent) externalSetRiskPercent(val);
+  };
+
   const [entryPrice, setEntryPrice] = useState<number>(activeSignal?.entryPrice || asset.currentPrice);
   const [stopLoss, setStopLoss] = useState<number>(activeSignal?.stopLoss || Number((asset.currentPrice * 0.992).toFixed(asset.digits)));
   const [takeProfit, setTakeProfit] = useState<number>(activeSignal?.takeProfit1 || Number((asset.currentPrice * 1.015).toFixed(asset.digits)));
@@ -53,9 +74,12 @@ export const PositionCalculator: React.FC<PositionCalculatorProps> = ({
             <DollarSign className="w-3.5 h-3.5 absolute right-2.5 top-2.5 text-slate-400" />
             <input
               type="number"
+              min="1"
+              step="any"
               value={balance}
-              onChange={(e) => setBalance(Number(e.target.value))}
+              onChange={(e) => setBalance(Math.max(1, Number(e.target.value)))}
               className="w-full bg-slate-950 border border-slate-800 rounded-lg pr-8 pl-2 py-1.5 text-white font-mono font-bold focus:outline-none focus:border-emerald-500"
+              placeholder="مثال: 1 أو 3"
             />
           </div>
         </div>
