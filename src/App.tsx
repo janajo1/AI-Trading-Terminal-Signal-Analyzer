@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Asset, TimeFrame, Candle, AISignal, TechnicalIndicators, AIStrategyPreset } from './types';
+import { Asset, TimeFrame, Candle, AISignal, TechnicalIndicators, AIStrategyPreset, Position, PendingOrder, ClosedTrade } from './types';
 import { INITIAL_ASSETS, generateCandles } from './data/marketData';
 import { Header } from './components/Header';
 import { MarketWatchSidebar } from './components/MarketWatchSidebar';
@@ -8,8 +8,9 @@ import { AISignalPanel } from './components/AISignalPanel';
 import { AIStrategySelector } from './components/AIStrategySelector';
 import { PositionCalculator } from './components/PositionCalculator';
 import { TechnicalSummaryBar } from './components/TechnicalSummaryBar';
+import { PositionsPanel } from './components/PositionsPanel';
 import { DeploymentGuideModal } from './components/DeploymentGuideModal';
-import { Zap, Sparkles, Calculator, BookOpen, MessageSquare, Send, Bot, User, RefreshCw, PanelRightClose, PanelRightOpen } from 'lucide-react';
+import { Zap, Sparkles, Calculator, BookOpen, MessageSquare, Send, Bot, User, RefreshCw, PanelRightClose, PanelRightOpen, Coins } from 'lucide-react';
 
 export default function App() {
   const [assets, setAssets] = useState<Asset[]>(INITIAL_ASSETS);
@@ -20,11 +21,17 @@ export default function App() {
   const [isGeneratingSignal, setIsGeneratingSignal] = useState(false);
   const [isHostingGuideOpen, setIsHostingGuideOpen] = useState(false);
   const [isRightSidebarOpen, setIsRightSidebarOpen] = useState(true);
-  const [activeBottomTab, setActiveBottomTab] = useState<'strategies' | 'calculator' | 'copilot'>('strategies');
+  const [activeBottomTab, setActiveBottomTab] = useState<'positions' | 'strategies' | 'calculator' | 'copilot'>('positions');
 
   // User capital and risk percentage state for capital-tailored recommendations
   const [userCapital, setUserCapital] = useState<number>(1000);
   const [riskPercent, setRiskPercent] = useState<number>(2);
+
+  // Demo Trading Engine State
+  const [positions, setPositions] = useState<Position[]>([]);
+  const [pendingOrders, setPendingOrders] = useState<PendingOrder[]>([]);
+  const [closedTrades, setClosedTrades] = useState<ClosedTrade[]>([]);
+
 
   // Custom AI Strategy states
   const [isGeneratingCustomStrategy, setIsGeneratingCustomStrategy] = useState(false);
@@ -47,17 +54,129 @@ export default function App() {
     setCandles(freshCandles);
   }, [selectedAsset.symbol, timeframe]);
 
-  // Periodic price updates simulation
+  // Real-time market tick & positions evaluation
   useEffect(() => {
     const interval = setInterval(() => {
-      setAssets(prev => prev.map(a => {
-        const delta = (Math.random() - 0.495) * (a.currentPrice * 0.0008);
-        const newPrice = Number((a.currentPrice + delta).toFixed(a.digits));
-        return {
-          ...a,
-          currentPrice: newPrice
-        };
-      }));
+      setAssets(prev => {
+        const nextAssets = prev.map(a => {
+          const delta = (Math.random() - 0.495) * (a.currentPrice * 0.0008);
+          const newPrice = Number((a.currentPrice + delta).toFixed(a.digits));
+          return {
+            ...a,
+            currentPrice: newPrice
+          };
+        });
+
+        // Update active open positions PnL and check SL/TP auto-trigger
+        setPositions(prevPos => {
+          const remaining: Position[] = [];
+          prevPos.forEach(pos => {
+            const matchingAsset = nextAssets.find(a => a.symbol === pos.symbol);
+            const cp = matchingAsset ? matchingAsset.currentPrice : pos.currentPrice;
+            const diff = pos.type === 'BUY' ? cp - pos.entryPrice : pos.entryPrice - cp;
+
+            const multiplier = pos.symbol.includes('XAU') ? 100 : pos.symbol.includes('BTC') ? 1 : 1000;
+            const pnl = Number((diff * pos.lotSize * multiplier).toFixed(2));
+            const pnlPercent = Number(((diff / pos.entryPrice) * 100 * (pos.type === 'BUY' ? 1 : -1)).toFixed(2));
+
+            // Check auto TP / SL
+            let autoClosed = false;
+            let closeReason: 'TAKE_PROFIT' | 'STOP_LOSS' | null = null;
+
+            if (pos.takeProfit) {
+              if (pos.type === 'BUY' && cp >= pos.takeProfit) {
+                autoClosed = true;
+                closeReason = 'TAKE_PROFIT';
+              } else if (pos.type === 'SELL' && cp <= pos.takeProfit) {
+                autoClosed = true;
+                closeReason = 'TAKE_PROFIT';
+              }
+            }
+
+            if (!autoClosed && pos.stopLoss) {
+              if (pos.type === 'BUY' && cp <= pos.stopLoss) {
+                autoClosed = true;
+                closeReason = 'STOP_LOSS';
+              } else if (pos.type === 'SELL' && cp >= pos.stopLoss) {
+                autoClosed = true;
+                closeReason = 'STOP_LOSS';
+              }
+            }
+
+            if (autoClosed && closeReason) {
+              setUserCapital(cap => cap + pnl);
+              setClosedTrades(history => [
+                {
+                  id: `cls-${Date.now()}`,
+                  symbol: pos.symbol,
+                  assetName: pos.assetName,
+                  type: pos.type,
+                  lotSize: pos.lotSize,
+                  entryPrice: pos.entryPrice,
+                  closePrice: cp,
+                  stopLoss: pos.stopLoss,
+                  takeProfit: pos.takeProfit,
+                  openTime: pos.openTime,
+                  closeTime: new Date().toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit' }),
+                  pnl,
+                  closeReason
+                },
+                ...history
+              ]);
+            } else {
+              remaining.push({
+                ...pos,
+                currentPrice: cp,
+                pnl,
+                pnlPercent
+              });
+            }
+          });
+          return remaining;
+        });
+
+        // Evaluate pending orders triggers
+        setPendingOrders(prevOrd => {
+          const remaining: PendingOrder[] = [];
+          prevOrd.forEach(ord => {
+            const matchingAsset = nextAssets.find(a => a.symbol === ord.symbol);
+            const cp = matchingAsset ? matchingAsset.currentPrice : ord.targetPrice;
+            let triggered = false;
+
+            if (ord.type === 'BUY_LIMIT' && cp <= ord.targetPrice) triggered = true;
+            if (ord.type === 'SELL_LIMIT' && cp >= ord.targetPrice) triggered = true;
+            if (ord.type === 'BUY_STOP' && cp >= ord.targetPrice) triggered = true;
+            if (ord.type === 'SELL_STOP' && cp <= ord.targetPrice) triggered = true;
+
+            if (triggered) {
+              const newType = ord.type.includes('BUY') ? 'BUY' : 'SELL';
+              setPositions(posList => [
+                {
+                  id: `pos-${Date.now()}`,
+                  symbol: ord.symbol,
+                  assetName: ord.assetName,
+                  type: newType,
+                  lotSize: ord.lotSize,
+                  entryPrice: cp,
+                  currentPrice: cp,
+                  stopLoss: ord.stopLoss,
+                  takeProfit: ord.takeProfit,
+                  openTime: new Date().toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit' }),
+                  pnl: 0,
+                  pnlPercent: 0,
+                  signalId: ord.signalId
+                },
+                ...posList
+              ]);
+            } else {
+              remaining.push(ord);
+            }
+          });
+          return remaining;
+        });
+
+        return nextAssets;
+      });
 
       // Update current selected asset price in candles
       setCandles(prev => {
@@ -82,6 +201,97 @@ export default function App() {
 
     return () => clearInterval(interval);
   }, [selectedAsset]);
+
+  // Demo Trade Execution Handlers
+  const handleExecuteDemoTrade = (sigOrType: any, lotOverride?: number) => {
+    const isSig = 'strategyName' in sigOrType;
+    const symbol = isSig ? sigOrType.symbol : sigOrType.symbol;
+    const type = isSig ? sigOrType.type : sigOrType.type;
+    const entryPrice = isSig ? sigOrType.entryPrice : sigOrType.entryPrice;
+    const lotSize = lotOverride || (isSig ? (sigOrType.calculatedLotSize || 0.01) : sigOrType.lotSize);
+    const stopLoss = isSig ? sigOrType.stopLoss : sigOrType.stopLoss;
+    const takeProfit = isSig ? sigOrType.takeProfit1 : sigOrType.takeProfit;
+
+    const newPosition: Position = {
+      id: `pos-${Date.now()}`,
+      symbol,
+      assetName: selectedAsset.nameAr,
+      type,
+      lotSize,
+      entryPrice,
+      currentPrice: selectedAsset.currentPrice,
+      stopLoss,
+      takeProfit,
+      openTime: new Date().toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
+      pnl: 0,
+      pnlPercent: 0,
+      signalId: isSig ? sigOrType.id : undefined
+    };
+
+    setPositions(prev => [newPosition, ...prev]);
+    setActiveBottomTab('positions');
+  };
+
+  const handlePlacePendingOrder = (order: { symbol: string; type: 'BUY_LIMIT' | 'SELL_LIMIT' | 'BUY_STOP' | 'SELL_STOP'; targetPrice: number; lotSize: number; stopLoss?: number; takeProfit?: number }) => {
+    const newOrder: PendingOrder = {
+      id: `ord-${Date.now()}`,
+      symbol: order.symbol,
+      assetName: selectedAsset.nameAr,
+      type: order.type,
+      targetPrice: order.targetPrice,
+      lotSize: order.lotSize,
+      stopLoss: order.stopLoss,
+      takeProfit: order.takeProfit,
+      createdTime: new Date().toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+    };
+
+    setPendingOrders(prev => [newOrder, ...prev]);
+    setActiveBottomTab('positions');
+  };
+
+  const handleClosePosition = (positionId: string) => {
+    setPositions(prev => {
+      const target = prev.find(p => p.id === positionId);
+      if (target) {
+        setUserCapital(cap => cap + target.pnl);
+        setClosedTrades(history => [
+          {
+            id: `cls-${Date.now()}`,
+            symbol: target.symbol,
+            assetName: target.assetName,
+            type: target.type,
+            lotSize: target.lotSize,
+            entryPrice: target.entryPrice,
+            closePrice: target.currentPrice,
+            stopLoss: target.stopLoss,
+            takeProfit: target.takeProfit,
+            openTime: target.openTime,
+            closeTime: new Date().toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit' }),
+            pnl: target.pnl,
+            closeReason: 'MANUAL'
+          },
+          ...history
+        ]);
+      }
+      return prev.filter(p => p.id !== positionId);
+    });
+  };
+
+  const handleCancelPendingOrder = (orderId: string) => {
+    setPendingOrders(prev => prev.filter(o => o.id !== orderId));
+  };
+
+  const handleInstantMarketOrder = (type: 'BUY' | 'SELL', lotSize: number) => {
+    handleExecuteDemoTrade({
+      symbol: selectedAsset.symbol,
+      type,
+      entryPrice: selectedAsset.currentPrice,
+      lotSize,
+      stopLoss: Number((selectedAsset.currentPrice * (type === 'BUY' ? 0.992 : 1.008)).toFixed(selectedAsset.digits)),
+      takeProfit: Number((selectedAsset.currentPrice * (type === 'BUY' ? 1.015 : 0.985)).toFixed(selectedAsset.digits))
+    }, lotSize);
+  };
+
 
   // Technical Indicators summary calculation
   const lastPrice = candles.length > 0 ? candles[candles.length - 1].close : selectedAsset.currentPrice;
@@ -286,6 +496,7 @@ export default function App() {
               onTimeframeChange={(tf) => setTimeframe(tf)}
               activeSignal={activeSignal}
               onRefreshData={() => setCandles(generateCandles(selectedAsset.currentPrice, selectedAsset.digits, 65))}
+              positions={positions}
             />
           </div>
 
@@ -295,10 +506,27 @@ export default function App() {
             indicators={technicals}
           />
 
-          {/* Bottom Tabs Panel (Strategies, Calculator, AI Copilot) */}
+          {/* Bottom Tabs Panel (Positions Demo, Strategies, Calculator, AI Copilot) */}
           <div className="bg-slate-900 border border-slate-800 rounded-lg p-3 space-y-3">
-            <div className="flex items-center justify-between border-b border-slate-800 pb-2">
-              <div className="flex items-center gap-1.5 bg-slate-950 p-1 rounded-md border border-slate-800">
+            <div className="flex items-center justify-between border-b border-slate-800 pb-2 overflow-x-auto gap-2">
+              <div className="flex items-center gap-1.5 bg-slate-950 p-1 rounded-md border border-slate-800 shrink-0">
+                <button
+                  onClick={() => setActiveBottomTab('positions')}
+                  className={`px-3 py-1.5 rounded-md text-xs font-bold transition-colors cursor-pointer flex items-center gap-1.5 ${
+                    activeBottomTab === 'positions'
+                      ? 'bg-emerald-600 text-white shadow'
+                      : 'text-slate-400 hover:text-white hover:bg-slate-800'
+                  }`}
+                >
+                  <Coins className="w-3.5 h-3.5 text-yellow-300" />
+                  <span>صفقات المحاكاة Demo</span>
+                  {positions.length > 0 && (
+                    <span className="bg-emerald-400 text-slate-950 px-1.5 py-0.2 rounded-full text-[10px] font-black">
+                      {positions.length}
+                    </span>
+                  )}
+                </button>
+
                 <button
                   onClick={() => setActiveBottomTab('strategies')}
                   className={`px-3 py-1.5 rounded-md text-xs font-bold transition-colors cursor-pointer flex items-center gap-1.5 ${
@@ -308,7 +536,7 @@ export default function App() {
                   }`}
                 >
                   <Zap className="w-3.5 h-3.5 text-yellow-300" />
-                  <span>الاستراتيجيات الجاهزة والتلقائية</span>
+                  <span>الاستراتيجيات التلقائية</span>
                 </button>
 
                 <button
@@ -320,7 +548,7 @@ export default function App() {
                   }`}
                 >
                   <Calculator className="w-3.5 h-3.5 text-emerald-400" />
-                  <span>حاسبة اللوت وإدارة المخاطر</span>
+                  <span>حاسبة اللوت والمخاطرة</span>
                 </button>
 
                 <button
@@ -339,13 +567,29 @@ export default function App() {
               {/* Sidebar toggle button */}
               <button
                 onClick={() => setIsRightSidebarOpen(!isRightSidebarOpen)}
-                className="p-1.5 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 transition-colors text-xs flex items-center gap-1 cursor-pointer"
+                className="p-1.5 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 transition-colors text-xs flex items-center gap-1 cursor-pointer shrink-0"
                 title="فتح/إغلاق شاشة التوصيات"
               >
                 {isRightSidebarOpen ? <PanelRightClose className="w-4 h-4 text-blue-400" /> : <PanelRightOpen className="w-4 h-4 text-blue-400" />}
                 <span className="hidden sm:inline">لوحة التوصيات</span>
               </button>
             </div>
+
+            {/* Bottom Tab 0: Demo Positions Panel */}
+            {activeBottomTab === 'positions' && (
+              <PositionsPanel
+                currentAsset={selectedAsset}
+                asset={selectedAsset}
+                positions={positions}
+                pendingOrders={pendingOrders}
+                closedTrades={closedTrades}
+                demoBalance={userCapital}
+                onExecuteInstantTrade={handleInstantMarketOrder}
+                onClosePosition={handleClosePosition}
+                onCancelPendingOrder={handleCancelPendingOrder}
+                onResetDemoBalance={() => setUserCapital(1000)}
+              />
+            )}
 
             {/* Bottom Tab 1: Strategies Selector */}
             {activeBottomTab === 'strategies' && (
@@ -357,6 +601,7 @@ export default function App() {
                 customResult={customStrategyResult}
               />
             )}
+
 
             {/* Bottom Tab 2: Position Size Calculator */}
             {activeBottomTab === 'calculator' && (
@@ -434,6 +679,8 @@ export default function App() {
               setRiskPercent={setRiskPercent}
               onGenerateNewSignal={() => handleGenerateSignal(selectedAsset)}
               onApplyToChart={(sig) => setActiveSignal(sig)}
+              onExecuteDemoTrade={handleExecuteDemoTrade}
+              onPlacePendingOrder={handlePlacePendingOrder}
             />
           </aside>
         )}

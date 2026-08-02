@@ -1,6 +1,10 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Candle, Asset, TimeFrame, ChartType, AISignal, DrawingTool, ChartDrawing } from '../types';
-import { Eye, EyeOff, SlidersHorizontal, RefreshCw, Layers, TrendingUp, Sparkles, Activity, Trash2, Edit3, ShieldAlert } from 'lucide-react';
+import { Candle, Asset, TimeFrame, ChartType, AISignal, DrawingTool, ChartDrawing, Position } from '../types';
+import {
+  Eye, EyeOff, RefreshCw, Activity, Trash2, Edit3,
+  ZoomIn, ZoomOut, Maximize2, Minimize2, RotateCcw,
+  ArrowLeftRight, Sparkles, ChevronLeft, ChevronRight, Expand
+} from 'lucide-react';
 
 interface CandlestickChartProps {
   asset: Asset;
@@ -9,7 +13,9 @@ interface CandlestickChartProps {
   onTimeframeChange: (tf: TimeFrame) => void;
   activeSignal: AISignal | null;
   onRefreshData: () => void;
+  positions?: Position[];
 }
+
 
 // EMA Helper function
 function calculateEMA(data: number[], period: number): (number | null)[] {
@@ -17,7 +23,6 @@ function calculateEMA(data: number[], period: number): (number | null)[] {
   const k = 2 / (period + 1);
   const result: (number | null)[] = new Array(data.length).fill(null);
   
-  // First value is simple SMA
   let sum = 0;
   for (let i = 0; i < period; i++) {
     sum += data[i];
@@ -39,7 +44,8 @@ export const CandlestickChart: React.FC<CandlestickChartProps> = ({
   timeframe,
   onTimeframeChange,
   activeSignal,
-  onRefreshData
+  onRefreshData,
+  positions = []
 }) => {
   const [chartType, setChartType] = useState<ChartType>('candlestick');
 
@@ -54,6 +60,12 @@ export const CandlestickChart: React.FC<CandlestickChartProps> = ({
   const [show3HighsLows, setShow3HighsLows] = useState(true);
   const [showSignalOverlay, setShowSignalOverlay] = useState(true);
 
+  // Zoom & Pan & Fullscreen Expansion states
+  const [visibleCandleCount, setVisibleCandleCount] = useState<number>(32);
+  const [panOffset, setPanOffset] = useState<number>(0);
+  const [isFullscreen, setIsFullscreen] = useState<boolean>(false);
+  const [isExpandedHeight, setIsExpandedHeight] = useState<boolean>(false);
+
   // Drawing tools state
   const [activeTool, setActiveTool] = useState<DrawingTool>('none');
   const [drawings, setDrawings] = useState<ChartDrawing[]>([]);
@@ -63,7 +75,7 @@ export const CandlestickChart: React.FC<CandlestickChartProps> = ({
   const [mousePos, setMousePos] = useState<{ x: number; y: number } | null>(null);
 
   const containerRef = useRef<HTMLDivElement>(null);
-  const [dimensions, setDimensions] = useState({ width: 800, height: 440 });
+  const [dimensions, setDimensions] = useState({ width: 800, height: 450 });
 
   // Handle responsive resize with ResizeObserver
   useEffect(() => {
@@ -73,13 +85,13 @@ export const CandlestickChart: React.FC<CandlestickChartProps> = ({
         const { width, height } = entries[0].contentRect;
         setDimensions({
           width: Math.max(300, width),
-          height: Math.max(350, height || 440)
+          height: Math.max(350, isFullscreen ? window.innerHeight - 120 : (height || (isExpandedHeight ? 640 : 450)))
         });
       }
     });
     observer.observe(containerRef.current);
     return () => observer.disconnect();
-  }, []);
+  }, [isFullscreen, isExpandedHeight]);
 
   if (!candles || candles.length === 0) {
     return (
@@ -89,8 +101,17 @@ export const CandlestickChart: React.FC<CandlestickChartProps> = ({
     );
   }
 
-  // Calculate Price Range
-  const prices = candles.flatMap(c => [c.high, c.low]);
+  // Slice candles for Zooming & Panning
+  const clampedCount = Math.min(candles.length, Math.max(10, visibleCandleCount));
+  const maxPan = Math.max(0, candles.length - clampedCount);
+  const currentPan = Math.min(maxPan, Math.max(0, panOffset));
+
+  const startIdx = Math.max(0, candles.length - clampedCount - currentPan);
+  const endIdx = candles.length - currentPan;
+  const displayCandles = candles.slice(startIdx, endIdx);
+
+  // Calculate Price Range for displayed candles
+  const prices = displayCandles.flatMap(c => [c.high, c.low]);
   let minPrice = Math.min(...prices);
   let maxPrice = Math.max(...prices);
 
@@ -107,9 +128,9 @@ export const CandlestickChart: React.FC<CandlestickChartProps> = ({
 
   const chartHeight = showRSIUltimate ? dimensions.height * 0.70 : dimensions.height - 40;
   const rsiHeight = showRSIUltimate ? dimensions.height * 0.24 : 0;
-  const chartWidth = dimensions.width - 70; // 70px right Y-axis for prices
+  const chartWidth = dimensions.width - 75; // 75px right Y-axis for prices
 
-  const candleWidth = Math.max(4, (chartWidth / candles.length) - 2);
+  const candleWidth = Math.max(5, (chartWidth / (displayCandles.length || 1)) - 3);
 
   // Helper to map price to Y SVG coordinate
   const priceToY = (price: number) => {
@@ -120,44 +141,55 @@ export const CandlestickChart: React.FC<CandlestickChartProps> = ({
     return maxPrice - (y / chartHeight) * (maxPrice - minPrice);
   };
 
-  // Helper to map index to X SVG coordinate
+  // Helper to map index within displayCandles to X SVG coordinate
   const indexToX = (index: number) => {
-    return (index / (candles.length - 1 || 1)) * (chartWidth - candleWidth) + candleWidth / 2;
+    return (index / (displayCandles.length - 1 || 1)) * (chartWidth - candleWidth) + candleWidth / 2;
   };
 
-  // Calculate EMAs (20, 50, 200, 1000)
+  // Calculate EMAs over full candles array & slice for displayCandles
   const closePrices = candles.map(c => c.close);
   const ema20Raw = calculateEMA(closePrices, 20);
   const ema50Raw = calculateEMA(closePrices, 50);
   const ema200Raw = calculateEMA(closePrices, 200);
-  const ema1000Raw = calculateEMA(closePrices, 30); // Adaptive scaling for chart preview size
+  const ema1000Raw = calculateEMA(closePrices, 30);
 
-  const ema20Points = ema20Raw.map((v, i) => v !== null ? { x: indexToX(i), y: priceToY(v) } : null).filter(Boolean) as { x: number; y: number }[];
-  const ema50Points = ema50Raw.map((v, i) => v !== null ? { x: indexToX(i), y: priceToY(v) } : null).filter(Boolean) as { x: number; y: number }[];
-  const ema200Points = ema200Raw.map((v, i) => v !== null ? { x: indexToX(i), y: priceToY(v) } : null).filter(Boolean) as { x: number; y: number }[];
-  const ema1000Points = ema1000Raw.map((v, i) => v !== null ? { x: indexToX(i), y: priceToY(v) } : null).filter(Boolean) as { x: number; y: number }[];
+  const getEmaPointsForDisplay = (rawEma: (number | null)[]) => {
+    const points: { x: number; y: number }[] = [];
+    for (let i = 0; i < displayCandles.length; i++) {
+      const fullIdx = startIdx + i;
+      const val = rawEma[fullIdx];
+      if (val !== null && val !== undefined) {
+        points.push({ x: indexToX(i), y: priceToY(val) });
+      }
+    }
+    return points;
+  };
 
-  // Calculate RSI Ultimate & RSI Signal Line (MA of RSI)
+  const ema20Points = getEmaPointsForDisplay(ema20Raw);
+  const ema50Points = getEmaPointsForDisplay(ema50Raw);
+  const ema200Points = getEmaPointsForDisplay(ema200Raw);
+  const ema1000Points = getEmaPointsForDisplay(ema1000Raw);
+
+  // Calculate RSI Ultimate for displayCandles
   const rsiValues: number[] = [];
-  let gains = 0;
-  let losses = 0;
-  for (let i = 1; i < candles.length; i++) {
-    const diff = candles[i].close - candles[i - 1].close;
-    if (diff >= 0) gains += diff;
-    else losses += Math.abs(diff);
-
-    if (i >= 14) {
+  for (let i = 0; i < displayCandles.length; i++) {
+    const fullIdx = startIdx + i;
+    if (fullIdx >= 14) {
+      let gains = 0, losses = 0;
+      for (let k = fullIdx - 13; k <= fullIdx; k++) {
+        const diff = candles[k].close - candles[k - 1].close;
+        if (diff >= 0) gains += diff;
+        else losses += Math.abs(diff);
+      }
       const avgGain = gains / 14;
       const avgLoss = losses / 14;
       const rs = avgLoss === 0 ? 100 : avgGain / avgLoss;
-      const rsi = 100 - (100 / (1 + rs));
-      rsiValues.push(rsi);
+      rsiValues.push(100 - (100 / (1 + rs)));
     } else {
       rsiValues.push(50);
     }
   }
 
-  // Calculate RSI Moving Average
   const rsiMaValues: number[] = [];
   const rsiPeriod = 9;
   for (let i = 0; i < rsiValues.length; i++) {
@@ -174,29 +206,27 @@ export const CandlestickChart: React.FC<CandlestickChartProps> = ({
     return rsiTop + rsiHeight - (rsiVal / 100) * rsiHeight;
   };
 
-  // Find swing highs and swing lows for 3 Highs & 3 Lows Pattern detection
+  // Find swing highs and swing lows on displayCandles
   const swingHighs: { index: number; price: number; label: string }[] = [];
   const swingLows: { index: number; price: number; label: string }[] = [];
 
-  for (let i = 2; i < candles.length - 2; i++) {
-    const isHigh = candles[i].high > candles[i - 1].high && candles[i].high > candles[i - 2].high &&
-                   candles[i].high > candles[i + 1].high && candles[i].high > candles[i + 2].high;
-    const isLow = candles[i].low < candles[i - 1].low && candles[i].low < candles[i - 2].low &&
-                  candles[i].low < candles[i + 1].low && candles[i].low < candles[i + 2].low;
+  for (let i = 2; i < displayCandles.length - 2; i++) {
+    const isHigh = displayCandles[i].high > displayCandles[i - 1].high && displayCandles[i].high > displayCandles[i - 2].high &&
+                   displayCandles[i].high > displayCandles[i + 1].high && displayCandles[i].high > displayCandles[i + 2].high;
+    const isLow = displayCandles[i].low < displayCandles[i - 1].low && displayCandles[i].low < displayCandles[i - 2].low &&
+                  displayCandles[i].low < displayCandles[i + 1].low && displayCandles[i].low < displayCandles[i + 2].low;
 
-    if (isHigh) {
-      const label = `H${swingHighs.length + 1}`;
-      if (swingHighs.length < 3) swingHighs.push({ index: i, price: candles[i].high, label });
+    if (isHigh && swingHighs.length < 3) {
+      swingHighs.push({ index: i, price: displayCandles[i].high, label: `H${swingHighs.length + 1}` });
     }
-    if (isLow) {
-      const label = `L${swingLows.length + 1}`;
-      if (swingLows.length < 3) swingLows.push({ index: i, price: candles[i].low, label });
+    if (isLow && swingLows.length < 3) {
+      swingLows.push({ index: i, price: displayCandles[i].low, label: `L${swingLows.length + 1}` });
     }
   }
 
-  // Institutional Order Blocks calculation (Highest/Lowest zones)
-  const highestCandle = candles.reduce((prev, curr) => curr.high > prev.high ? curr : prev, candles[0]);
-  const lowestCandle = candles.reduce((prev, curr) => curr.low < prev.low ? curr : prev, candles[0]);
+  // Institutional Order Blocks calculation on displayCandles
+  const highestCandle = displayCandles.reduce((prev, curr) => curr.high > prev.high ? curr : prev, displayCandles[0]);
+  const lowestCandle = displayCandles.reduce((prev, curr) => curr.low < prev.low ? curr : prev, displayCandles[0]);
 
   const supplyOrderBlock = {
     top: highestCandle.high,
@@ -209,7 +239,7 @@ export const CandlestickChart: React.FC<CandlestickChartProps> = ({
     label: 'Demand Order Block (منطقة طلب مؤسسية)'
   };
 
-  // Auto Fibonacci levels calculation between min and max price
+  // Fibonacci Retracement Levels
   const fibHigh = maxPrice - pricePadding;
   const fibLow = minPrice + pricePadding;
   const fibDiff = fibHigh - fibLow;
@@ -261,68 +291,103 @@ export const CandlestickChart: React.FC<CandlestickChartProps> = ({
     }
   };
 
-  const currentCandle = hoveredCandle || candles[candles.length - 1];
+  const currentCandle = hoveredCandle || displayCandles[displayCandles.length - 1];
+
+  const zoomIn = () => setVisibleCandleCount(prev => Math.max(10, prev - 6));
+  const zoomOut = () => setVisibleCandleCount(prev => Math.min(candles.length, prev + 10));
+  const resetZoom = () => { setVisibleCandleCount(32); setPanOffset(0); };
+
+  const containerClassName = isFullscreen
+    ? "fixed inset-0 z-50 bg-slate-950 p-4 flex flex-col w-screen h-screen overflow-hidden shadow-2xl"
+    : `flex flex-col bg-slate-950 border border-slate-800 rounded-lg overflow-hidden select-none ${isExpandedHeight ? 'h-[680px]' : 'h-full min-h-[450px]'}`;
 
   return (
-    <div id="chart-terminal-container" className="flex flex-col h-full bg-slate-950 border border-slate-800 rounded-lg overflow-hidden select-none">
-      {/* Top Chart Toolbar */}
-      <div className="bg-slate-900 border-b border-slate-800 px-3 py-1.5 flex flex-wrap items-center justify-between gap-2 text-xs">
-        {/* Timeframes */}
-        <div className="flex items-center gap-1 bg-slate-950 p-1 rounded-md border border-slate-800">
-          {(['M1', 'M5', 'M15', 'H1', 'H4', 'D1'] as TimeFrame[]).map((tf) => (
-            <button
-              key={tf}
-              onClick={() => onTimeframeChange(tf)}
-              className={`px-2 py-1 rounded text-xs font-mono font-bold transition-colors cursor-pointer ${
-                timeframe === tf
-                  ? 'bg-blue-600 text-white shadow-sm'
-                  : 'text-slate-400 hover:text-white hover:bg-slate-800'
-              }`}
-            >
-              {tf}
-            </button>
-          ))}
+    <div id="chart-terminal-container" className={containerClassName}>
+      {/* Top Chart Primary Controls Toolbar */}
+      <div className="bg-slate-900 border-b border-slate-800 px-3 py-2 flex flex-wrap items-center justify-between gap-2 text-xs">
+        {/* Asset & Timeframe Picker */}
+        <div className="flex items-center gap-2">
+          <div className="flex items-center gap-1.5 bg-slate-950 px-2 py-1 rounded border border-slate-800 font-bold text-white text-xs">
+            <span className="text-emerald-400">{asset.symbol}</span>
+            <span className="text-slate-400 font-normal">({asset.nameAr})</span>
+          </div>
+
+          <div className="flex items-center gap-1 bg-slate-950 p-1 rounded-md border border-slate-800">
+            {(['M1', 'M5', 'M15', 'H1', 'H4', 'D1'] as TimeFrame[]).map((tf) => (
+              <button
+                key={tf}
+                onClick={() => onTimeframeChange(tf)}
+                className={`px-2 py-0.5 rounded text-xs font-mono font-bold transition-colors cursor-pointer ${
+                  timeframe === tf
+                    ? 'bg-blue-600 text-white shadow-sm'
+                    : 'text-slate-400 hover:text-white hover:bg-slate-800'
+                }`}
+              >
+                {tf}
+              </button>
+            ))}
+          </div>
         </div>
 
-        {/* EMA Toggles Bar */}
-        <div className="flex items-center gap-1.5 flex-wrap">
-          <span className="text-[10px] text-slate-400 font-bold ml-1">المتوسطات EMA:</span>
+        {/* Zoom & Chart Area Expansion Controls (تكبير مساحة الرسم والتكبير الداخلي) */}
+        <div className="flex items-center gap-1.5 bg-slate-950 p-1 rounded-lg border border-yellow-500/30">
+          <span className="text-[10px] text-yellow-400 font-bold px-1 hidden sm:inline">تكبير وتوسيع المساحة:</span>
+          
           <button
-            onClick={() => setShowEMA20(!showEMA20)}
-            className={`px-2 py-0.5 rounded border text-[10px] font-mono cursor-pointer transition-colors ${
-              showEMA20 ? 'border-cyan-500 bg-cyan-500/10 text-cyan-300 font-bold' : 'border-slate-800 text-slate-500'
-            }`}
+            onClick={zoomIn}
+            className="p-1.5 rounded bg-slate-900 hover:bg-slate-800 text-emerald-400 border border-slate-800 cursor-pointer flex items-center gap-1 text-[11px]"
+            title="تكبير الشموع لرؤية التفاصيل"
           >
-            EMA 20
+            <ZoomIn className="w-3.5 h-3.5" />
+            <span className="hidden md:inline font-bold">+ تكبير الشموع</span>
           </button>
+
           <button
-            onClick={() => setShowEMA50(!showEMA50)}
-            className={`px-2 py-0.5 rounded border text-[10px] font-mono cursor-pointer transition-colors ${
-              showEMA50 ? 'border-yellow-500 bg-yellow-500/10 text-yellow-300 font-bold' : 'border-slate-800 text-slate-500'
-            }`}
+            onClick={zoomOut}
+            className="p-1.5 rounded bg-slate-900 hover:bg-slate-800 text-slate-300 border border-slate-800 cursor-pointer flex items-center gap-1 text-[11px]"
+            title="تصغير الشموع لرؤية النظرة العامة"
           >
-            EMA 50
+            <ZoomOut className="w-3.5 h-3.5" />
+            <span className="hidden md:inline font-bold">- تصغير</span>
           </button>
+
           <button
-            onClick={() => setShowEMA200(!showEMA200)}
-            className={`px-2 py-0.5 rounded border text-[10px] font-mono cursor-pointer transition-colors ${
-              showEMA200 ? 'border-purple-500 bg-purple-500/10 text-purple-300 font-bold' : 'border-slate-800 text-slate-500'
-            }`}
+            onClick={resetZoom}
+            className="p-1 rounded bg-slate-900 hover:bg-slate-800 text-slate-400 cursor-pointer"
+            title="إعادة ضبط العرض"
           >
-            EMA 200
+            <RotateCcw className="w-3.5 h-3.5" />
           </button>
+
+          <div className="h-4 w-px bg-slate-800 mx-0.5" />
+
+          {/* Expand Height Button */}
           <button
-            onClick={() => setShowEMA1000(!showEMA1000)}
-            className={`px-2 py-0.5 rounded border text-[10px] font-mono cursor-pointer transition-colors ${
-              showEMA1000 ? 'border-rose-500 bg-rose-500/10 text-rose-300 font-bold' : 'border-slate-800 text-slate-500'
+            onClick={() => setIsExpandedHeight(!isExpandedHeight)}
+            className={`px-2 py-1 rounded text-[11px] font-bold cursor-pointer border flex items-center gap-1 ${
+              isExpandedHeight ? 'bg-amber-500 text-slate-950 border-amber-400' : 'bg-slate-900 text-amber-300 border-amber-500/40 hover:bg-slate-800'
             }`}
+            title="مضاعفة ارتفاع الشاشة لرؤية المساحة بشكل أكبر"
           >
-            EMA 1000
+            <Expand className="w-3.5 h-3.5" />
+            <span className="hidden sm:inline">{isExpandedHeight ? 'ارتفاع عادي' : 'ارتفاع مضاعف (680px)'}</span>
+          </button>
+
+          {/* Fullscreen Button */}
+          <button
+            onClick={() => setIsFullscreen(!isFullscreen)}
+            className={`p-1.5 rounded text-[11px] font-bold cursor-pointer border flex items-center gap-1 ${
+              isFullscreen ? 'bg-rose-600 text-white border-rose-400' : 'bg-gradient-to-r from-blue-600 to-indigo-600 text-white border-blue-400'
+            }`}
+            title="تكبير مساحة الرسم ملء الشاشة الكاملة"
+          >
+            {isFullscreen ? <Minimize2 className="w-3.5 h-3.5" /> : <Maximize2 className="w-3.5 h-3.5" />}
+            <span>{isFullscreen ? 'إغلاق الشاشة' : 'ملء الشاشة ⛶'}</span>
           </button>
         </div>
 
-        {/* Feature Toggles */}
-        <div className="flex items-center gap-1.5">
+        {/* Indicator Toggles */}
+        <div className="flex items-center gap-1 flex-wrap">
           <button
             onClick={() => setShowRSIUltimate(!showRSIUltimate)}
             className={`px-2 py-1 rounded border text-[11px] font-semibold flex items-center gap-1 cursor-pointer ${
@@ -335,29 +400,20 @@ export const CandlestickChart: React.FC<CandlestickChartProps> = ({
 
           <button
             onClick={() => setShowFibonacci(!showFibonacci)}
-            className={`px-2 py-1 rounded border text-[11px] font-semibold flex items-center gap-1 cursor-pointer ${
+            className={`px-2 py-1 rounded border text-[11px] font-semibold cursor-pointer ${
               showFibonacci ? 'border-emerald-500/60 bg-emerald-500/10 text-emerald-300' : 'border-slate-800 text-slate-500'
             }`}
           >
-            <span>فيبوناتشي 61.8%</span>
+            <span>فيبوناتشي</span>
           </button>
 
           <button
             onClick={() => setShowOrderBlocks(!showOrderBlocks)}
-            className={`px-2 py-1 rounded border text-[11px] font-semibold flex items-center gap-1 cursor-pointer ${
+            className={`px-2 py-1 rounded border text-[11px] font-semibold cursor-pointer ${
               showOrderBlocks ? 'border-amber-500/60 bg-amber-500/10 text-amber-300' : 'border-slate-800 text-slate-500'
             }`}
           >
-            <span>كتل الأوامر OrderBlocks</span>
-          </button>
-
-          <button
-            onClick={() => setShow3HighsLows(!show3HighsLows)}
-            className={`px-2 py-1 rounded border text-[11px] font-semibold flex items-center gap-1 cursor-pointer ${
-              show3HighsLows ? 'border-indigo-500/60 bg-indigo-500/10 text-indigo-300' : 'border-slate-800 text-slate-500'
-            }`}
-          >
-            <span>3 قمم وقيعان</span>
+            <span>OrderBlocks</span>
           </button>
 
           <button
@@ -370,12 +426,12 @@ export const CandlestickChart: React.FC<CandlestickChartProps> = ({
         </div>
       </div>
 
-      {/* Drawing Tools Sub-bar */}
-      <div className="bg-slate-950 px-3 py-1 flex items-center justify-between border-b border-slate-900 text-xs text-slate-300">
-        <div className="flex items-center gap-2">
+      {/* Sub-bar: Drawing Tools & Time Navigation (Pan Slider) */}
+      <div className="bg-slate-950 px-3 py-1.5 flex flex-wrap items-center justify-between border-b border-slate-900 text-xs text-slate-300 gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
           <span className="text-[11px] text-slate-400 font-bold flex items-center gap-1">
             <Edit3 className="w-3.5 h-3.5 text-blue-400" />
-            أدوات الرسم والتحديد:
+            أدوات الرسم:
           </span>
 
           <button
@@ -384,7 +440,7 @@ export const CandlestickChart: React.FC<CandlestickChartProps> = ({
               activeTool === 'horizontal_line' ? 'bg-blue-600 text-white border-blue-400 font-bold' : 'bg-slate-900 border-slate-800 text-slate-300 hover:bg-slate-800'
             }`}
           >
-            ➖ خط أفقي (دعم/مقاومة)
+            ➖ خط أفقي
           </button>
 
           <button
@@ -393,7 +449,7 @@ export const CandlestickChart: React.FC<CandlestickChartProps> = ({
               activeTool === 'trendline' ? 'bg-blue-600 text-white border-blue-400 font-bold' : 'bg-slate-900 border-slate-800 text-slate-300 hover:bg-slate-800'
             }`}
           >
-            📈 خط اتجاه (Trendline)
+            📈 خط اتجاه
           </button>
 
           <button
@@ -402,7 +458,7 @@ export const CandlestickChart: React.FC<CandlestickChartProps> = ({
               activeTool === 'order_block' ? 'bg-blue-600 text-white border-blue-400 font-bold' : 'bg-slate-900 border-slate-800 text-slate-300 hover:bg-slate-800'
             }`}
           >
-            🧱 صندوق كتلة الأوامر
+            🧱 صندوق منطقة
           </button>
 
           {drawings.length > 0 && (
@@ -416,18 +472,51 @@ export const CandlestickChart: React.FC<CandlestickChartProps> = ({
           )}
         </div>
 
+        {/* Time Navigation Panning Bar */}
+        <div className="flex items-center gap-2 text-[11px] bg-slate-900 px-2 py-0.5 rounded border border-slate-800">
+          <span className="text-slate-400 font-bold">إزاحة التاريخ:</span>
+          <button
+            disabled={currentPan >= maxPan}
+            onClick={() => setPanOffset(prev => Math.min(maxPan, prev + 4))}
+            className="p-0.5 rounded text-slate-300 hover:text-white disabled:opacity-30 cursor-pointer"
+            title="الرجوع للشموع السابقة"
+          >
+            <ChevronRight className="w-4 h-4" />
+          </button>
+
+          <span className="font-mono text-emerald-400 font-bold">
+            {displayCandles.length} شمعة (تكبير {Math.round((30 / clampedCount) * 100)}%)
+          </span>
+
+          <button
+            disabled={currentPan <= 0}
+            onClick={() => setPanOffset(prev => Math.max(0, prev - 4))}
+            className="p-0.5 rounded text-slate-300 hover:text-white disabled:opacity-30 cursor-pointer"
+            title="التقدم نحو الشمعة الحديثة"
+          >
+            <ChevronLeft className="w-4 h-4" />
+          </button>
+        </div>
+
         {/* OHLC summary header */}
         <div className="hidden md:flex items-center gap-2 font-mono text-[11px]">
-          <span className="text-slate-400">سعر: <strong className="text-white">{currentCandle.close.toFixed(asset.digits)}</strong></span>
-          <span className="text-emerald-400">أعلى: {currentCandle.high.toFixed(asset.digits)}</span>
+          <span className="text-slate-400">سعر الشمعة النشطة: <strong className="text-emerald-400 font-bold">{currentCandle.close.toFixed(asset.digits)}</strong></span>
+          <span className="text-slate-300">أعلى: {currentCandle.high.toFixed(asset.digits)}</span>
           <span className="text-rose-400">أدنى: {currentCandle.low.toFixed(asset.digits)}</span>
         </div>
       </div>
 
-      {/* Main SVG Interactive Stage */}
+      {/* Main SVG Interactive Stage with Wheel Zoom support */}
       <div
         ref={containerRef}
         className="relative flex-1 w-full bg-slate-950 cursor-crosshair overflow-hidden"
+        onWheel={(e) => {
+          if (e.deltaY < 0) {
+            zoomIn();
+          } else {
+            zoomOut();
+          }
+        }}
         onMouseMove={(e) => {
           if (!containerRef.current) return;
           const rect = containerRef.current.getBoundingClientRect();
@@ -435,8 +524,8 @@ export const CandlestickChart: React.FC<CandlestickChartProps> = ({
           const y = e.clientY - rect.top;
           setMousePos({ x, y });
 
-          const idx = Math.min(candles.length - 1, Math.max(0, Math.floor((x / chartWidth) * candles.length)));
-          setHoveredCandle(candles[idx]);
+          const idx = Math.min(displayCandles.length - 1, Math.max(0, Math.floor((x / chartWidth) * displayCandles.length)));
+          setHoveredCandle(displayCandles[idx]);
         }}
         onMouseLeave={() => {
           setMousePos(null);
@@ -499,10 +588,9 @@ export const CandlestickChart: React.FC<CandlestickChartProps> = ({
             </g>
           )}
 
-          {/* Institutional Order Blocks (Supply & Demand Boxes) */}
+          {/* Institutional Order Blocks */}
           {showOrderBlocks && (
             <g id="order-blocks">
-              {/* Supply Order Block (Sell Zone) */}
               <rect
                 x={0}
                 y={priceToY(supplyOrderBlock.top)}
@@ -518,7 +606,6 @@ export const CandlestickChart: React.FC<CandlestickChartProps> = ({
                 {supplyOrderBlock.label}
               </text>
 
-              {/* Demand Order Block (Buy Zone) */}
               <rect
                 x={0}
                 y={priceToY(demandOrderBlock.top)}
@@ -539,7 +626,7 @@ export const CandlestickChart: React.FC<CandlestickChartProps> = ({
           {/* Candlesticks Render */}
           {chartType === 'candlestick' && (
             <g>
-              {candles.map((candle, idx) => {
+              {displayCandles.map((candle, idx) => {
                 const x = indexToX(idx);
                 const openY = priceToY(candle.open);
                 const closeY = priceToY(candle.close);
@@ -573,13 +660,13 @@ export const CandlestickChart: React.FC<CandlestickChartProps> = ({
             <g>
               {chartType === 'area' && (
                 <polygon
-                  points={`0,${chartHeight} ${candles.map((c, i) => `${indexToX(i)},${priceToY(c.close)}`).join(' ')} ${chartWidth},${chartHeight}`}
+                  points={`0,${chartHeight} ${displayCandles.map((c, i) => `${indexToX(i)},${priceToY(c.close)}`).join(' ')} ${chartWidth},${chartHeight}`}
                   fill="url(#area-gradient)"
                   opacity={0.4}
                 />
               )}
               <polyline
-                points={candles.map((c, i) => `${indexToX(i)},${priceToY(c.close)}`).join(' ')}
+                points={displayCandles.map((c, i) => `${indexToX(i)},${priceToY(c.close)}`).join(' ')}
                 fill="none"
                 stroke="#3b82f6"
                 strokeWidth="2"
@@ -593,7 +680,7 @@ export const CandlestickChart: React.FC<CandlestickChartProps> = ({
             </g>
           )}
 
-          {/* EMA Lines (20, 50, 200, 1000) */}
+          {/* EMA Lines */}
           {showEMA20 && ema20Points.length > 1 && (
             <polyline
               points={ema20Points.map(p => `${p.x},${p.y}`).join(' ')}
@@ -708,59 +795,93 @@ export const CandlestickChart: React.FC<CandlestickChartProps> = ({
             return null;
           })}
 
-          {/* Active Signal Overlay Lines (SL / TP1 / TP2 / TP3) */}
+          {/* Active Signal Overlay Lines (Fresh Candle Spot Entry) */}
           {activeSignal && showSignalOverlay && activeSignal.symbol === asset.symbol && (
             <g id="signal-overlay-lines">
               {/* Entry */}
               <g>
                 <line x1={0} y1={priceToY(activeSignal.entryPrice)} x2={chartWidth} y2={priceToY(activeSignal.entryPrice)} stroke="#3b82f6" strokeWidth="2" strokeDasharray="6 3" />
-                <rect x={chartWidth + 2} y={priceToY(activeSignal.entryPrice) - 10} width="65" height="18" fill="#3b82f6" rx="3" />
-                <text x={chartWidth + 6} y={priceToY(activeSignal.entryPrice) + 3} fill="#ffffff" fontSize="10" fontWeight="bold">ENTRY</text>
+                <rect x={chartWidth + 2} y={priceToY(activeSignal.entryPrice) - 10} width="68" height="18" fill="#3b82f6" rx="3" />
+                <text x={chartWidth + 6} y={priceToY(activeSignal.entryPrice) + 3} fill="#ffffff" fontSize="10" fontWeight="bold">ENTRY (شمعة)</text>
               </g>
               {/* Stop Loss */}
               <g>
                 <line x1={0} y1={priceToY(activeSignal.stopLoss)} x2={chartWidth} y2={priceToY(activeSignal.stopLoss)} stroke="#ef4444" strokeWidth="2.5" />
-                <rect x={chartWidth + 2} y={priceToY(activeSignal.stopLoss) - 10} width="65" height="18" fill="#ef4444" rx="3" />
+                <rect x={chartWidth + 2} y={priceToY(activeSignal.stopLoss) - 10} width="68" height="18" fill="#ef4444" rx="3" />
                 <text x={chartWidth + 6} y={priceToY(activeSignal.stopLoss) + 3} fill="#ffffff" fontSize="10" fontWeight="bold">SL: {activeSignal.stopLoss.toFixed(asset.digits)}</text>
               </g>
               {/* TP1 */}
               <g>
                 <line x1={0} y1={priceToY(activeSignal.takeProfit1)} x2={chartWidth} y2={priceToY(activeSignal.takeProfit1)} stroke="#10b981" strokeWidth="2" strokeDasharray="4 2" />
-                <rect x={chartWidth + 2} y={priceToY(activeSignal.takeProfit1) - 10} width="65" height="18" fill="#10b981" rx="3" />
+                <rect x={chartWidth + 2} y={priceToY(activeSignal.takeProfit1) - 10} width="68" height="18" fill="#10b981" rx="3" />
                 <text x={chartWidth + 6} y={priceToY(activeSignal.takeProfit1) + 3} fill="#ffffff" fontSize="10" fontWeight="bold">TP1: {activeSignal.takeProfit1.toFixed(asset.digits)}</text>
               </g>
             </g>
           )}
+
+          {/* Active Open Demo Trade Lines on Chart */}
+          {positions.filter(p => p.symbol === asset.symbol).map((pos) => {
+            const entryY = priceToY(pos.entryPrice);
+            const isBuy = pos.type === 'BUY';
+            const isProfit = pos.pnl >= 0;
+            return (
+              <g key={`chart-pos-${pos.id}`}>
+                {/* Position Entry Line */}
+                <line x1={0} y1={entryY} x2={chartWidth} y2={entryY} stroke={isBuy ? '#10b981' : '#f43f5e'} strokeWidth="2.5" strokeDasharray="2 2" />
+                <rect x={10} y={entryY - 11} width="160" height="22" fill={isBuy ? '#065f46' : '#9f1239'} rx="4" stroke="#ffffff" strokeWidth="1" />
+                <text x={16} y={entryY + 4} fill="#ffffff" fontSize="10" fontWeight="bold">
+                  {pos.type} {pos.lotSize}L @ {pos.entryPrice} ({isProfit ? '+' : ''}${pos.pnl.toFixed(2)})
+                </text>
+
+                {/* Position SL Line if defined */}
+                {pos.stopLoss && (
+                  <g>
+                    <line x1={0} y1={priceToY(pos.stopLoss)} x2={chartWidth} y2={priceToY(pos.stopLoss)} stroke="#ef4444" strokeWidth="1.5" strokeDasharray="4 4" />
+                    <text x={180} y={priceToY(pos.stopLoss) - 3} fill="#ef4444" fontSize="9" fontWeight="bold">
+                      SL: {pos.stopLoss}
+                    </text>
+                  </g>
+                )}
+
+                {/* Position TP Line if defined */}
+                {pos.takeProfit && (
+                  <g>
+                    <line x1={0} y1={priceToY(pos.takeProfit)} x2={chartWidth} y2={priceToY(pos.takeProfit)} stroke="#10b981" strokeWidth="1.5" strokeDasharray="4 4" />
+                    <text x={180} y={priceToY(pos.takeProfit) - 3} fill="#10b981" fontSize="9" fontWeight="bold">
+                      TP: {pos.takeProfit}
+                    </text>
+                  </g>
+                )}
+              </g>
+            );
+          })}
+
 
           {/* RSI Ultimate Sub-chart */}
           {showRSIUltimate && (
             <g id="rsi-ultimate-subchart">
               <line x1={0} y1={chartHeight + 28} x2={dimensions.width} y2={chartHeight + 28} stroke="#334155" />
 
-              {/* Overbought 70 Box */}
               <rect x={0} y={rsiToY(100)} width={chartWidth} height={rsiToY(70) - rsiToY(100)} fill="#ef4444" fillOpacity={0.08} />
               <line x1={0} y1={rsiToY(70)} x2={chartWidth} y2={rsiToY(70)} stroke="#ef4444" strokeDasharray="3 3" opacity={0.7} />
               <text x={chartWidth + 6} y={rsiToY(70) + 3} fill="#ef4444" fontSize="9" fontWeight="bold">70 OB</text>
 
-              {/* Oversold 30 Box */}
               <rect x={0} y={rsiToY(30)} width={chartWidth} height={rsiToY(0) - rsiToY(30)} fill="#10b981" fillOpacity={0.08} />
               <line x1={0} y1={rsiToY(30)} x2={chartWidth} y2={rsiToY(30)} stroke="#10b981" strokeDasharray="3 3" opacity={0.7} />
               <text x={chartWidth + 6} y={rsiToY(30) + 3} fill="#10b981" fontSize="9" fontWeight="bold">30 OS</text>
 
-              {/* RSI Main Line */}
               {rsiValues.length > 1 && (
                 <polyline
-                  points={rsiValues.map((v, i) => `${indexToX(i + 1)},${rsiToY(v)}`).join(' ')}
+                  points={rsiValues.map((v, i) => `${indexToX(i)},${rsiToY(v)}`).join(' ')}
                   fill="none"
                   stroke="#a855f7"
                   strokeWidth="2"
                 />
               )}
 
-              {/* RSI Moving Average (Signal Line) */}
               {rsiMaValues.length > 1 && (
                 <polyline
-                  points={rsiMaValues.map((v, i) => `${indexToX(i + 1)},${rsiToY(v)}`).join(' ')}
+                  points={rsiMaValues.map((v, i) => `${indexToX(i)},${rsiToY(v)}`).join(' ')}
                   fill="none"
                   stroke="#f59e0b"
                   strokeWidth="1.5"
@@ -777,7 +898,7 @@ export const CandlestickChart: React.FC<CandlestickChartProps> = ({
               <line x1={0} y1={mousePos.y} x2={chartWidth} y2={mousePos.y} stroke="#94a3b8" strokeDasharray="2 2" opacity={0.6} />
               {mousePos.y <= chartHeight && (
                 <g>
-                  <rect x={chartWidth} y={mousePos.y - 10} width={68} height={20} fill="#3b82f6" rx="2" />
+                  <rect x={chartWidth} y={mousePos.y - 10} width={72} height={20} fill="#3b82f6" rx="2" />
                   <text x={chartWidth + 4} y={mousePos.y + 3} fill="#ffffff" fontSize="10" fontWeight="bold">
                     {yToPrice(mousePos.y).toFixed(asset.digits)}
                   </text>

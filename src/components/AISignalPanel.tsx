@@ -12,6 +12,8 @@ interface AISignalPanelProps {
   setRiskPercent: (val: number) => void;
   onGenerateNewSignal: () => void;
   onApplyToChart: (signal: AISignal) => void;
+  onExecuteDemoTrade?: (signal: AISignal, lotSize: number) => void;
+  onPlacePendingOrder?: (order: { symbol: string; type: 'BUY_LIMIT' | 'SELL_LIMIT'; targetPrice: number; lotSize: number; stopLoss: number; takeProfit: number }) => void;
 }
 
 export const AISignalPanel: React.FC<AISignalPanelProps> = ({
@@ -23,7 +25,9 @@ export const AISignalPanel: React.FC<AISignalPanelProps> = ({
   riskPercent,
   setRiskPercent,
   onGenerateNewSignal,
-  onApplyToChart
+  onApplyToChart,
+  onExecuteDemoTrade,
+  onPlacePendingOrder
 }) => {
   const [copied, setCopied] = useState(false);
   const [showFullReasons, setShowFullReasons] = useState(true);
@@ -265,13 +269,28 @@ export const AISignalPanel: React.FC<AISignalPanelProps> = ({
             </div>
 
             <div>
-              <label className="text-[10px] text-slate-400 block mb-1">تحديد حسب سعر الدخول:</label>
+              <div className="flex items-center justify-between mb-1">
+                <label className="text-[10px] text-slate-400 block">سعر الدخول للشمعة:</label>
+                <button
+                  onClick={() => {
+                    setCustomEntryPrice(asset.currentPrice);
+                    const delta = asset.currentPrice * 0.0035;
+                    const isB = signal.type === 'BUY';
+                    const f = isB ? 1 : -1;
+                    setCustomStopLoss(Number((asset.currentPrice - f * delta * 1.2).toFixed(asset.digits)));
+                  }}
+                  className="text-[10px] text-emerald-400 font-bold hover:underline cursor-pointer flex items-center gap-1 bg-emerald-950/60 px-1.5 py-0.5 rounded border border-emerald-800/80"
+                  title="مزامنة فورية مع سعر الشمعة النشطة الآن"
+                >
+                  <span>⚡ سعر الشمعة الآن ({asset.currentPrice})</span>
+                </button>
+              </div>
               <input
                 type="number"
                 step="any"
                 value={customEntryPrice}
                 onChange={(e) => setCustomEntryPrice(Number(e.target.value))}
-                className="w-full bg-slate-900 border border-slate-700 rounded px-2 py-1 text-blue-300 font-mono text-[11px] focus:outline-none focus:border-blue-500"
+                className="w-full bg-slate-900 border border-slate-700 rounded px-2 py-1 text-blue-300 font-mono text-[11px] focus:outline-none focus:border-blue-500 font-bold"
               />
             </div>
           </div>
@@ -381,21 +400,32 @@ export const AISignalPanel: React.FC<AISignalPanelProps> = ({
           </div>
         </div>
 
-        {/* AI Rationale Accordion */}
+        {/* AI Rationale Accordion & Entry Timing Explanation */}
         <div className="p-3 bg-slate-950 rounded-lg border border-slate-800 text-xs space-y-2">
+          <div className="flex items-center justify-between text-[11px] text-emerald-400 font-bold bg-emerald-950/40 p-2 rounded border border-emerald-800/60">
+            <span className="flex items-center gap-1.5">
+              <Clock className="w-3.5 h-3.5 text-emerald-400" />
+              توقيت الدخول الفوري للشمعة الأخيرة:
+            </span>
+            <span className="font-mono text-white text-[10px]">دخول الآن ({customEntryPrice})</span>
+          </div>
+          <p className="text-[10px] text-slate-400 leading-normal">
+            💡 التوصية محسوبة على **سعر الشمعة النشطة حالياً** لتتمكن من الدخول فوراً بدون إضاعة الوقت، أو اختيار **أمر معلق Limit** إذا أردت الانتظار لحين هبوط السعر لمستوى أفضل.
+          </p>
+
           <div
             onClick={() => setShowFullReasons(!showFullReasons)}
-            className="flex items-center justify-between cursor-pointer font-bold text-slate-300"
+            className="flex items-center justify-between cursor-pointer font-bold text-slate-300 pt-1 border-t border-slate-900"
           >
             <span className="flex items-center gap-1.5">
               <Sparkles className="w-3.5 h-3.5 text-blue-400" />
-              سبب التوصية والرؤية الفنية (AI Rationale)
+              لماذا هذا هو وقت الدخول المناسب؟ (AI Rationale)
             </span>
             {showFullReasons ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
           </div>
 
           {showFullReasons && (
-            <div className="space-y-2 pt-1 border-t border-slate-900 text-slate-300">
+            <div className="space-y-2 pt-1 text-slate-300">
               <p className="leading-relaxed text-[11px] text-slate-300">
                 {signal.analysisSummary}
               </p>
@@ -411,24 +441,56 @@ export const AISignalPanel: React.FC<AISignalPanelProps> = ({
           )}
         </div>
 
-        {/* Action Button: Apply signal & Regenerate */}
+        {/* Action Buttons: Execute Demo Trade, Pending Order, Apply signal & Regenerate */}
         <div className="space-y-2 pt-1">
-          <button
-            onClick={() => onApplyToChart({ ...signal, entryPrice: customEntryPrice, stopLoss: customStopLoss })}
-            className="w-full bg-blue-600 hover:bg-blue-500 text-white font-bold py-2 px-3 rounded-lg text-xs flex items-center justify-center gap-2 shadow-md transition-colors cursor-pointer"
-          >
-            <Target className="w-4 h-4 text-yellow-300" />
-            <span>رسم خطوط الدخول ووقف الخسارة على الشاشة</span>
-          </button>
+          {onExecuteDemoTrade && (
+            <button
+              onClick={() => onExecuteDemoTrade({ ...signal, entryPrice: customEntryPrice, stopLoss: customStopLoss }, calculatedLot)}
+              className="w-full bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-black py-2.5 px-3 rounded-lg text-xs flex items-center justify-center gap-2 shadow-lg transition-all cursor-pointer active:scale-98 border border-emerald-400/40"
+              title="تنفيد التوصية فوراً بأموال تجريبية مطابقة لسعر السوق الحقيقي"
+            >
+              <Coins className="w-4 h-4 text-yellow-300 animate-bounce" />
+              <span>⚡ تطبيق التوصية فوراً في الحساب التجريبي Demo ({calculatedLot} Lot)</span>
+            </button>
+          )}
 
-          <button
-            onClick={onGenerateNewSignal}
-            className="w-full bg-slate-800 hover:bg-slate-700 text-slate-200 font-semibold py-2 px-3 rounded-lg text-xs flex items-center justify-center gap-2 border border-slate-700 transition-colors cursor-pointer"
-          >
-            <Sparkles className="w-3.5 h-3.5 text-yellow-400" />
-            <span>تحديث وتوليد توصية جديدة حسب المبلغ ${userCapital.toLocaleString()}</span>
-          </button>
+          {onPlacePendingOrder && (
+            <button
+              onClick={() => onPlacePendingOrder({
+                symbol: signal.symbol,
+                type: signal.type === 'BUY' ? 'BUY_LIMIT' : 'SELL_LIMIT',
+                targetPrice: Number((customEntryPrice * (signal.type === 'BUY' ? 0.998 : 1.002)).toFixed(asset.digits)),
+                lotSize: calculatedLot,
+                stopLoss: customStopLoss,
+                takeProfit: signal.takeProfit1
+              })}
+              className="w-full bg-amber-950/80 hover:bg-amber-900 text-amber-300 border border-amber-800 font-bold py-2 px-3 rounded-lg text-xs flex items-center justify-center gap-2 transition-colors cursor-pointer"
+              title="إنشاء أمر معلق ليتم التنفيذ تلقائياً عند النزول لطلب أفضل"
+            >
+              <Clock className="w-3.5 h-3.5 text-amber-400" />
+              <span>⏳ تعيين أمر معلق (Limit Order) للانتظار حتى السعر الأنسب</span>
+            </button>
+          )}
+
+          <div className="grid grid-cols-2 gap-2">
+            <button
+              onClick={() => onApplyToChart({ ...signal, entryPrice: customEntryPrice, stopLoss: customStopLoss })}
+              className="w-full bg-blue-600 hover:bg-blue-500 text-white font-bold py-2 px-2 rounded-lg text-[11px] flex items-center justify-center gap-1 shadow transition-colors cursor-pointer"
+            >
+              <Target className="w-3.5 h-3.5 text-yellow-300" />
+              <span>رسم الخريطة بالألوان</span>
+            </button>
+
+            <button
+              onClick={onGenerateNewSignal}
+              className="w-full bg-slate-800 hover:bg-slate-700 text-slate-200 font-semibold py-2 px-2 rounded-lg text-[11px] flex items-center justify-center gap-1 border border-slate-700 transition-colors cursor-pointer"
+            >
+              <Sparkles className="w-3.5 h-3.5 text-yellow-400" />
+              <span>تحديث التوصية</span>
+            </button>
+          </div>
         </div>
+
       </div>
     </div>
   );

@@ -105,21 +105,19 @@ app.post("/api/gemini/generate-signals", async (req, res) => {
     const { symbol, assetName, timeframe, currentPrice, strategyPreference } = req.body;
     const ai = getGeminiClient();
 
-    const prompt = `أنت محرك الذكاء الاصطناعي لمنصة التداول MT5 المتقدمة.
-قم بتوليد توصية تداول فورية دقيقة ودقيقة للغاية (Instant Scalp/Swing Signal) للرمز ${symbol} (${assetName}) على الإطار الزمني ${timeframe}.
-السعر الحالي: ${currentPrice}.
+    const prompt = `أنت محرك الذكاء الاصطناعي لمنصة التداول MT5 المتقدمة والتداول الفوري للشموع اليابانية.
+قم بتوليد توصية تداول فورية دقيقة ودقيقة للغاية (Instant Spot/Scalp Signal) للرمز ${symbol} (${assetName}) على الإطار الزمني ${timeframe}.
+سعر الشمعة الحديثة الحالي بالضبط: ${currentPrice}.
 الاستراتيجية المتبعة: ${strategyPreference || 'Smart Money Concepts SMC / Order Block'}.
 
-احسب بدقة:
-1. نوع التوصية: BUY (شراء) أو SELL (بيع).
-2. سعر الدخول الدقيق (Entry Price).
-3. سعر وقف الخسارة (Stop Loss) لحماية حساب التداول.
-4. جني الأرباح الأول (Take Profit 1).
-5. جني الأرباح الثاني (Take Profit 2).
-6. جني الأرباح الثالث (Take Profit 3).
-7. نسبة المخاطرة مقابل العائد Risk/Reward Ratio.
-8. نسبة الثقة Confidence Score.
-9. الأسباب والاستراتيجية المتبعة شرح باللغة العربية.`;
+قواعد هامة جداً لنجاح التداول الفوري:
+1. سعر الدخول (entryPrice) يجب أن يكون يساوي بالضبط السعر الحالي للشمعة الحديثة وهو ${currentPrice}.
+2. نوع التوصية: BUY (شراء) أو SELL (بيع).
+3. سعر إيقاف الخسارة (stopLoss): أسهل من سعر الدخول في الشراء وأعلى في البيع بنسبة قريبة لحماية الصفقة.
+4. أهداف جني الأرباح (takeProfit1, takeProfit2, takeProfit3): محسوبة مباشرة من سعر الشمعة الحالية.
+5. نسبة المخاطرة مقابل العائد Risk/Reward Ratio.
+6. نسبة الثقة Confidence Score.
+7. الأسباب والاستراتيجية المتبعة شرح باللغة العربية.`;
 
     const response = await ai.models.generateContent({
       model: "gemini-3.6-flash",
@@ -130,7 +128,7 @@ app.post("/api/gemini/generate-signals", async (req, res) => {
           type: Type.OBJECT,
           properties: {
             type: { type: Type.STRING, description: "BUY or SELL" },
-            entryPrice: { type: Type.NUMBER, description: "سعر الدخول" },
+            entryPrice: { type: Type.NUMBER, description: "سعر الدخول المطابق للشمعة الحالية" },
             stopLoss: { type: Type.NUMBER, description: "وقف الخسارة" },
             takeProfit1: { type: Type.NUMBER, description: "الهدف الأول" },
             takeProfit2: { type: Type.NUMBER, description: "الهدف الثاني" },
@@ -156,6 +154,31 @@ app.post("/api/gemini/generate-signals", async (req, res) => {
     });
 
     const parsedData = JSON.parse(response.text || "{}");
+    // Ensure entry price anchors to live current price for fresh candle execution
+    const cp = Number(currentPrice);
+    const entry = cp;
+    const isBuy = parsedData.type === 'BUY';
+    const factor = isBuy ? 1 : -1;
+    const delta = cp * 0.0035;
+
+    // Sanitize SL and TPs if AI returned outdated price levels
+    let sl = parsedData.stopLoss;
+    if (!sl || Math.abs(sl - cp) / cp > 0.05 || (isBuy && sl >= cp) || (!isBuy && sl <= cp)) {
+      sl = Number((cp - factor * delta * 1.2).toFixed(6));
+    }
+    let tp1 = parsedData.takeProfit1;
+    if (!tp1 || (isBuy && tp1 <= cp) || (!isBuy && tp1 >= cp)) {
+      tp1 = Number((cp + factor * delta * 1.5).toFixed(6));
+    }
+    let tp2 = parsedData.takeProfit2;
+    if (!tp2 || (isBuy && tp2 <= tp1) || (!isBuy && tp2 >= tp1)) {
+      tp2 = Number((cp + factor * delta * 2.8).toFixed(6));
+    }
+    let tp3 = parsedData.takeProfit3;
+    if (!tp3 || (isBuy && tp3 <= tp2) || (!isBuy && tp3 >= tp2)) {
+      tp3 = Number((cp + factor * delta * 4.2).toFixed(6));
+    }
+
     return res.json({
       success: true,
       signal: {
@@ -165,7 +188,12 @@ app.post("/api/gemini/generate-signals", async (req, res) => {
         timeframe,
         timestamp: new Date().toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
         status: 'ACTIVE',
-        ...parsedData
+        ...parsedData,
+        entryPrice: entry,
+        stopLoss: sl,
+        takeProfit1: tp1,
+        takeProfit2: tp2,
+        takeProfit3: tp3
       }
     });
   } catch (error: any) {

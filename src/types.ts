@@ -125,3 +125,48 @@ export interface TradeCalculation {
   riskRewardRatio: number;
 }
 
+export interface Position {
+  id: string;
+  symbol: string;
+  assetName: string;
+  type: 'BUY' | 'SELL';
+  lotSize: number;
+  entryPrice: number;
+  currentPrice: number;
+  stopLoss?: number;
+  takeProfit?: number;
+  openTime: string;
+  pnl: number;
+  pnlPercent: number;
+  signalId?: string;
+}
+
+export interface PendingOrder {
+  id: string;
+  symbol: string;
+  assetName: string;
+  type: 'BUY_LIMIT' | 'SELL_LIMIT' | 'BUY_STOP' | 'SELL_STOP';
+  targetPrice: number;
+  lotSize: number;
+  stopLoss?: number;
+  takeProfit?: number;
+  createdTime: string;
+  signalId?: string;
+}
+
+export interface ClosedTrade {
+  id: string;
+  symbol: string;
+  assetName: string;
+  type: 'BUY' | 'SELL';
+  lotSize: number;
+  entryPrice: number;
+  closePrice: number;
+  stopLoss?: number;
+  takeProfit?: number;
+  openTime: string;
+  closeTime: string;
+  pnl: number;
+  closeReason: 'MANUAL' | 'TAKE_PROFIT' | 'STOP_LOSS';
+}
+
